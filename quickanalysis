@@ -1,0 +1,132 @@
+DATA_DIR <- "C://Users/u0118120/Documents/ethoscope"
+list.files(DATA_DIR)
+setwd(DATA_DIR)
+
+#2: From experiment design to metadata,
+#2-1 Loading libraries 
+library(behavr)
+library(scopr)
+library(sleepr)
+
+#3: loading and reading metadata file
+metadata <- fread("metadata.csv")
+metadata
+
+#4: Linking, link metadata with ethoscope
+metadata <- link_ethoscope_metadata(metadata, 
+                                    result_dir = "ethoscope_results")
+print(metadata)
+
+#5: Loading raw data without dead or escaped animals [e.g status == "Ok","Dead", Escaped]
+## this can be used to select animals with specific criteria
+metadata_subset <- metadata[status == "OK"]
+dt <- load_ethoscope(metadata_subset,
+                     FUN = sleepr::sleep_annotation, 
+                     verbose=FALSE)
+summary(dt)
+print(dt)
+
+#6: setting Zeitgeber (ZT0). here light starts at 06:00 AM summer time, 07:00 AM winter time
+#if CT20 should be at 09:00 AM -- 11:00 AM summter time, 12:00 noon winter time
+#if CT8 should be at 09:00 AM -- 11:00 PM summter time, 00:00 midnight winter time
+#if CT14 should be at 09:00 AM -- 05:00 PM summer time, 06:00 PM winter time
+dt <- load_ethoscope(metadata_subset,
+                     reference_hour=7.0, 
+                     FUN = sleepr::sleep_annotation, 
+                     verbose=FALSE)
+
+#9: data curation and removing dead animals automaticly. 
+#* In case it is not work, delete the dead fly from the metadata file and rerun script.
+#** curated data has another name so we can see the difference [dt vs dt_curated] 
+library(sleepr)
+dt_curated <- curate_dead_animals(dt)
+summary(dt_curated)
+#*** which animals have been removed
+setdiff(dt[, id, meta=T],
+        dt_curated[, id, meta=T])
+-----------------------------------------------
+  #11:***DATA_Subset**** # activate when important e.g exclude first day; sleep deprivation
+  
+  #dt_curated <- subset(dt_curated,  t>= 432000 )
+  #dt_curated <- subset(dt_curated,  t< 432000 )
+  #dt_curated_SD <- subset(dt_curated, xxx> t & t>=xxx )
+  
+  #dt_curated <- dt_curated[t %between% c(days(0), days(2))]
+
+#choose days for visualisation [start_datetime & stop_datetime , in seconds] when light start at 06:00 AM
+#day 	hour	time	startpoint
+#1	  06	  ZT0         0 -   43200
+#1	  18	  ZT12	  43200 -   86400
+#2	  30	  ZT0	    86400 -  129600
+#2	  42	  ZT12	 129600 -  172800
+#3	  54	  ZT0	   172800 -  216000
+#3	  66	  ZT12	 216000 -  259200
+#4	  78	  ZT0	   259200 -  302400
+#4	  90	  ZT12	 302400 -  345600
+#5	  102	  ZT0	   345600 -  388800
+#5	  114	  ZT12	 388800 -  432000
+#6	  126	  ZT0	   432000 -  475200
+#6	  138	  ZT12	 475200 -  518400
+#7    50	  ZT0	   518400 -  561600
+#7	  162	  ZT12	 561600 -  604800
+#8	  174	  ZT0	   604800 -  604800
+#8	  186	  ZT12	 648000 -  691200
+#9	  198	  ZT0	   691200 -  734400
+#9	  210	  ZT12	 734400 -  777600
+#10	  222	  ZT0	   777600 -  820800
+#10	  234	  ZT12	 820800 -  864000
+
+-------------------
+# Adding some phase information
+
+dt_curated[, phase := ifelse(t %% hours(24) < hours(12), "L", "D")]
+
+#***Plotting and analysis****
+# Population plots # coulour = lines of compare & facet = layers
+library(ggetho)
+ggetho(dt_curated, aes(y=asleep, colour=motor)) +
+  stat_pop_etho() +
+  stat_ld_annotations(height = 1, alpha=0.3, outline=NA) +
+  #facet_grid(region_id ~ .)+
+  theme_classic(base_size=10)+
+  theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  scale_y_continuous("asleep(%)", limits=c(0,1), labels = scales::percent)
+  #theme(axis.text.y=element_blank(),axis.ticks.y=element_blank())
+
+# Create plot for sum of interactions (rotations) for each fly every 30 min
+#colour could be changed to sex, genotype, etc. summary_FUN could be sum, mean, etc, summary_time_window could be any time intervals
+# for individuals
+#idx = '2018-07-19_10-42-39_006e27|05'
+#ggetho(dt_curated[id == idx] 
+
+ggetho(dt_curated[id == '2019-02-14_15-49-12_002e27|20'], aes(y=interactions, colour=optomotor), summary_FUN = sum, summary_time_window = mins(30))+
+  stat_pop_etho()+
+  stat_ld_annotations()+
+  theme_classic(base_size=30)+
+  theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  labs(y="tube rotations per 30 mins")
+
+#combine two datatables (same fly recorded in different sessions, i.e. different dates, same ethoscope)
+set.seed(1)
+met1 <- data.table::data.table(uid = 1:20,id = 1:20,
+                               condition = letters[1:20],
+                               sex = "F",
+                               key = "id")
+met2 <- data.table::data.table(uid = 1:20, id = 21:40,
+                               condition = letters[1:20],
+                               sex="F",
+                               key = "id")
+met1[, datetime := as.POSIXct("2019-02-11")]
+met2[, datetime := as.POSIXct("2019-02-14")]
+met <- rbind(met1, met2)
+data.table::setkeyv(met, "id")
+t <- 1L:100L
+data <- met[,list(t = t,
+                  x = rnorm(100),
+                  y = rnorm(100),
+                  eating = runif(100) > .5 ),
+            by = "id"]
+d <- behavr(data, met)
+summary(d)
+d2 <- stitch_on(d, on = "uid")
+summary(d2)
