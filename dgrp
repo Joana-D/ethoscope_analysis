@@ -1,0 +1,539 @@
+DATA_DIR <- "C://Users/u0118120/Documents/ethoscope"
+list.files(DATA_DIR)
+setwd(DATA_DIR)
+
+library(behavr)
+library(scopr)
+library(sleepr)
+
+#loading and reading metadata file
+metadata <- fread("metadata.csv")
+metadata
+
+#Linking metadata with ethoscope
+metadata <- link_ethoscope_metadata(metadata, 
+                                    result_dir = "ethoscope_results")
+print(metadata)
+
+## make metadata subset ---- IMPORTANT: need to change metadata to metadata_subset in the rest of script
+
+metadata_subset <- metadata[DGRP == "801"]
+dt <- load_ethoscope(metadata_subset, verbose=FALSE)
+summary(dt)
+print(dt)
+
+#setting Zeitgeber (ZT0). here light starts at 06:00 AM summer time, 07:00 AM winter time
+#if CT20 should be at 09:00 AM -- 11:00 AM summter time, 12:00 noon winter time
+#if CT8 should be at 09:00 AM -- 11:00 PM summter time, 00:00 midnight winter time
+#if CT14 should be at 09:00 AM -- 05:00 PM summer time, 06:00 PM winter time
+dt <- load_ethoscope(metadata_subset,
+                     reference_hour=6.0, 
+                     FUN = sleepr::sleep_annotation, 
+                     verbose=FALSE)
+
+# dt <- dt[xmv(machine_name) == 'ETHOSCOPE_003']
+
+#if you only want to analyze certain time frame
+#dt_trim <- dt[t %between% c(days(0), days(2))]
+------------------------------------------------------------------------------------------------------------------
+#***Plotting and analysis****
+  ### rejoin: combine datatable with metadata, e.g. bout_n (id, n_bouts, mean_bout_length) with metadata 
+  ###to be able to add colour=sex e.g.
+  
+# Population plots # coulour = lines of compare & facet = layers
+library(ggetho)
+ggetho(dt, aes(y=asleep, colour=sex)) +
+  stat_pop_etho() +
+  stat_ld_annotations(height = 1, alpha=0.1, outline=NA, x_limits = days(c(1.5,4)), ld_colours = c("grey", "black")) +
+  stat_ld_annotations(height = 1, alpha=0.1, outline=NA, x_limits = days(c(0,1)), ld_colours = c(NA, "black")) +
+  # facet_grid(replicate ~ .)+
+  # facet_grid(~ machine_name)+
+  theme_classic(base_size = 20)+
+  #theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  scale_y_continuous("Fraction of time asleep", limits=c(0,1), labels = scales::percent)
+  # scale_colour_manual(name=element_blank(), labels = c("Unstimulated control", "Rotated"), values = c("red", "blue"))
+  # coord_cartesian(xlim=c(days(1.1), days(3.9)))
+  #theme(axis.text.y=element_blank(),axis.ticks.y=element_blank())+
+  
+#x_limits = days(c(1.5,4)), ld_colours = c("grey", "black")) +
+#stat_ld_annotations(x_limits = days(c(0,1)), ld_colours = c(NA, "black")
+
+#height = 1, alpha=0.1, outline=NA, 
+
+# SD
+library(ggetho)
+ggetho(dt, aes(y=asleep, colour=motor)) +
+  stat_pop_etho() +
+  stat_ld_annotations(height = 1, alpha=0.1, outline=NA) +
+  facet_grid(replicate ~ .)+
+  # facet_grid(~ machine_name)+
+  theme_classic(base_size = 15)+
+  #theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  scale_y_continuous("Fraction of time asleep", limits=c(0,1), labels = scales::percent)
+  # scale_colour_manual(name=element_blank(), labels = c("Unstimulated control", "Rotated"), values = c("red", "blue"))
+# coord_cartesian(xlim=c(days(1.1), days(3.9)))
+#theme(axis.text.y=element_blank(),axis.ticks.y=element_blank())+
+
+#ggetho(dt_curated[id == 'idx']
+ggetho(dt, aes(y=interactions, colour=motor), summary_FUN = sum, summary_time_window = mins(30))+
+  stat_pop_etho()+
+  stat_ld_annotations()+
+  facet_grid(replicate ~ .)+
+  theme_classic(base_size=20)+
+  # theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  labs(y="Tube rotations per 30 min bin")
+
+#sleep rebound boxplot
+dt_rebound <- dt[t %between% c(days(0), days(2) + hours (3))]
+
+ggplot(dt, aes(y=asleep, colour = motor)) +
+  geom_boxplot(outlier.colour = NA) +
+  geom_jitter(alpha=.5) +
+  facet_grid(sex ~ .) +
+  scale_y_continuous(name= "Fraction of time sleeping (%)",labels = scales::percent)+
+  theme_bw()
+
+## SLEEP DURATION
+
+ # Adding phase variable
+dt[, phase := ifelse(t %% hours(24) < hours(12), "L", "D")]
+
+bout_dt_Dark <- bout_dt[t %between%  c(days(0)+ hours(12), days(1)) & c(days(1)+ hours(12), days(3) + hours(12))]
+# We express t relatively to the first day
+bout_dt_Dark[, t:= t - days(0)]
+
+bout_dt_Light <- bout_dt[t %between%  c(days(0), days(0) + hours(12)) & c(days(1), days(1)+ hours(12)) & c(days(2), days(2) + hours(12)) & c(days(3), days(3) + hours(12))]
+# We express t relatively to the first day
+bout_dt_Light[, t:= t - days(0)]
+
+bout_summary_d <- bout_dt_Dark[,.(
+  latency_d = t[1], # the first bout is at t[1]
+  first_bout_length_d = duration[1],
+  latency_to_longest_bout_d = t[which.max(duration)],
+  length_longest_bout_d = max(duration),
+  n_bouts = .N,
+  mean_bout_length = mean(duration)
+),
+by=id]
+bout_summary_d
+
+bout_summary_l <- bout_dt_Light[,.(
+  latency_l = t[1], # the first bout is at t[1]
+  first_bout_length_l = duration[1],
+  latency_to_longest_bout_l = t[which.max(duration)],
+  length_longest_bout_l = max(duration),
+  n_bouts = .N,
+  mean_bout_length = mean(duration)
+),
+by=id]
+bout_summary_l
+
+# merge summary_dt(all metadata variables, sleep_fraction_all, sleep_fraction_l, sleep_fraction_d) and 
+#bout_summary (for both D and L: latency to first bout, first_bout_length, latency_to_longest_bout, length_longest_bout, n_bouts, mean_bout_length)
+overall_summary_l <- summary_dt[bout_summary_l]
+overall_summary_l
+
+overall_summary_d <- summary_dt[bout_summary_d]
+overall_summary_d
+
+# make new dt with calculations of mean during L and D
+summary_dt <- 
+  rejoin(dt[,
+                    .(
+                      # sleep_fraction_all = mean(asleep),
+                      sleep_fraction_l = mean(asleep[phase == "L"]),
+                      sleep_fraction_d = mean(asleep[phase == "D"])
+                    ),
+                    ,by=id])
+summary_dt
+
+# make summary_dt_melted to make two variables: 'phase' and actual value in 'sleep_fraction'
+summary_dt_melted <- melt(summary_dt, measure.vars = patterns("sleep_fraction_"),
+                          variable.name = "phase", value.name = "sleep_fraction")
+
+# sleep amount during L, D, total 
+## plotting summary_dt_melted file, sleep fraction during night time, day time or total sleep 
+ggplot(summary_dt_melted, aes(x=factor(DGRP), y=sleep_fraction, colour=phase)) + 
+  geom_boxplot(outlier.colour = NA) +
+  geom_jitter(alpha=.5) +
+  facet_grid(sex ~ .) +
+  scale_y_continuous(name= "Fraction of time sleeping (%)",labels = scales::percent)+
+  scale_x_discrete(name= "DGRP line #")+
+  scale_colour_manual(name= "phase", labels= c("Day", "Night"), values = c("grey", "black"))+
+  theme_bw()
+
+#factor(incubator)
+---------------------------------------------------------------------------------------------------------
+## BOUTS AND LATENCY
+
+# make overall_summary including all calculations (sleep durations, bout length and number, sleep latencies)
+library(sleepr)
+bout_dt <- bout_analysis(asleep, dt)
+bout_dt <- bout_dt[asleep == TRUE, -"asleep"]
+
+# make new dt bout_summary with id, n_bouts, mean_bout_length
+bout_summary <- bout_dt[,
+                        .(n_bouts = .N,
+                          mean_bout_length = mean(duration)),
+                        by=id]
+
+# merge summary_dt(all metadata variables, sleep_fraction_all, sleep_fraction_l, sleep_fraction_d) and 
+#bout_summary (n_bouts, mean_bout_length)
+overall_summary <- summary_dt[bout_summary]
+overall_summary
+
+##BOUTS
+
+# # make these two plots for DGRP lines separately
+
+# Bout length vs time of the day
+# ggetho(bout_dt, aes(y=duration / 60, colour=factor(DGRP)), time_wrap = hours(24)) + 
+#   stat_pop_etho() + 
+#   facet_grid(sex ~ .) +
+#   scale_y_continuous(name= "Bout length (min)")+
+#   theme_bw()
+# 
+# # make a box plot of bout length for light and dark phases
+# ggetho(bout_dt, aes(y=duration / 60, colour=sex)) +
+#   geom_boxplot(outlier.colour = NA)+
+#   geom_jitter(alpha=.5) +
+#   stat_ld_annotations(height = 1, alpha=0.1, outline=NA, x_limits = days(c(1.5,4)),
+#                       ld_colours = c("grey", "black")) +
+#   stat_ld_annotations(height = 1, alpha=0.1, outline=NA, x_limits = days(c(0,1)),
+#                       ld_colours = c(NA, "black")) +
+#   # facet_grid(factor(DGRP) ~ .) +
+#   scale_y_continuous(name= "Bout length (min)")+
+#   theme_bw()
+
+# Bout number for different genotypes during night
+ggplot(overall_summary_l, aes(x=factor(DGRP), y=n_bouts, colour=sex)) + 
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(alpha=.5) +
+  scale_y_continuous(name= "Number of bouts")+
+  theme_bw()+
+  scale_x_discrete(name= "DGRP line #")+
+  scale_colour_manual(values = c("grey", "black"))
+
+# relationship between bout length and bout number, problem: this is over the whole time, both day and night
+#this is probably not that helpful
+  ggplot(overall_summary_d, aes(n_bouts, mean_bout_length, colour=sex)) +
+  geom_point() +
+  geom_smooth(method="lm", alpha=.1)+
+  facet_grid(factor(DGRP) ~ .) + 
+  scale_x_continuous(name="Number of bouts") +
+  scale_y_continuous(name="Average bout duration (s)")+
+  theme_bw()
+
+#correlation plots sleep duration and bout length or number for light and dark
+ggplot(overall_summary, aes(mean_bout_length /60, sleep_fraction_d, colour=factor(DGRP))) +
+  geom_point() +
+  geom_smooth(method="lm", alpha=.1)+
+  facet_grid(sex ~ .) + 
+  scale_x_continuous(name="mean bout duration (min)") +
+  scale_y_continuous(name="Fraction of time sleeping during night", limits=c(0,1), labels = scales::percent)+
+  scale_colour_discrete(name="DGRP line #")+
+  theme_bw()
+
+ggplot(overall_summary, aes(n_bouts, sleep_fraction_d, colour=factor(DGRP))) +
+  geom_point() +
+  geom_smooth(method="lm", alpha=.1)+
+  facet_grid(sex ~ .) + 
+  scale_x_continuous(name="Number of bouts") +
+  scale_y_continuous(name="Fraction of time sleeping during night", limits=c(0,1), labels = scales::percent)+
+  scale_colour_discrete(name="DGRP line #")+
+  theme_bw()
+-----------------------------------------------------------------------------------------------------
+### LATENCY DURING D AND L IN BOTH CYCLES (LD and DD) ###
+
+bout_dt_Dark <- bout_dt[t %between%  c(days(0)+ hours(12), days(1)) & c(days(1)+ hours(12), days(3) + hours(12))]
+# We express t relatively to the first day
+bout_dt_Dark[, t:= t - days(0)]
+
+bout_dt_Light <- bout_dt[t %between%  c(days(0), days(0) + hours(12)) & c(days(1), days(1)+ hours(12)) & c(days(2), days(2) + hours(12)) & c(days(3), days(3) + hours(12))]
+# We express t relatively to the first day
+bout_dt_Light[, t:= t - days(0)]
+
+bout_summary_d <- bout_dt_Dark[,.(
+  latency_d = t[1], # the first bout is at t[1]
+  first_bout_length_d = duration[1],
+  latency_to_longest_bout_d = t[which.max(duration)],
+  length_longest_bout_d = max(duration),
+  n_bouts = .N,
+  mean_bout_length = mean(duration)
+),
+by=id]
+bout_summary_d
+
+bout_summary_l <- bout_dt_Light[,.(
+  latency_l = t[1], # the first bout is at t[1]
+  first_bout_length_l = duration[1],
+  latency_to_longest_bout_l = t[which.max(duration)],
+  length_longest_bout_l = max(duration),
+  n_bouts = .N,
+  mean_bout_length = mean(duration)
+),
+by=id]
+bout_summary_l
+  
+# merge summary_dt(all metadata variables, sleep_fraction_all, sleep_fraction_l, sleep_fraction_d) and 
+#bout_summary (for both D and L: latency to first bout, first_bout_length, latency_to_longest_bout, length_longest_bout, n_bouts, mean_bout_length)
+overall_summary_l <- summary_dt[bout_summary_l]
+overall_summary_l
+
+overall_summary_d <- summary_dt[bout_summary_d]
+overall_summary_d
+
+## plotting sleep latency for different genotypes (D or L)
+ggplot(overall_summary_d, aes(x=factor(DGRP), y=latency_d/60, colour=sex)) + 
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(alpha=.5) +
+  scale_y_continuous(name= "Sleep latency (min)")+
+  scale_x_discrete(name="DGRP line #") +
+  scale_colour_manual(values = c("grey", "black"))+
+  theme_bw()
+
+ggplot(overall_summary_l, aes(x=factor(DGRP), y=latency_l/60, colour=sex)) + 
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(alpha=.5) +
+  scale_y_continuous(name= "Sleep latency (min)")+
+  scale_x_discrete(name="DGRP line #") +
+  scale_colour_manual(values = c("grey", "black"))+
+  theme_bw()
+
+ggplot(overall_summary, aes(latency / 60, sleep_fraction_d, colour=sex)) +
+  geom_point() +
+  geom_smooth(method="lm", alpha=.1)+
+  facet_grid(genotype ~ .)+
+  scale_x_continuous(name= "Sleep latency")+
+  scale_y_continuous(name= "Fraction of time sleeping during night")+
+  theme_bw()
+
+## plotting sleep latency for different genotypes to longest sleep bout
+ggplot(overall_summary, aes(x=genotype, y=latency_to_longest_bout/60, colour=sex)) + 
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(alpha=.5) +
+  scale_y_continuous(name= "Sleep latency to longest bout")+
+  theme_bw()
+
+ggplot(overall_summary, aes(latency_to_longest_bout/60, sleep_fraction_l, colour=sex)) +
+  geom_point() +
+  geom_smooth(method="lm", alpha=.1)+
+  facet_grid(genotype ~ .)+
+  scale_x_continuous(name= "Sleep latency to longest bout")+
+  scale_y_continuous(name= "Fraction of time sleeping during day")+
+  theme_bw()
+--------------------------------------------------------------------------------------------------------
+## only analyse all above plots for DD time
+  
+  dt_DD <- dt[t %between% c(days(2), days(4))]
+
+# Population plots # coulour = lines of compare & facet = layers
+library(ggetho)
+ggetho(dt_DD, aes(y=asleep, colour=sex)) +
+  stat_pop_etho() +
+  stat_ld_annotations(height = 1, alpha=0.1, outline=NA, x_limits = days(c(2,4)),
+                      ld_colours = c("grey", "black")) +
+  facet_grid(replicate ~ .)+
+  theme_classic(base_size=10)+
+  #theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  scale_y_continuous("asleep(%)", limits=c(0,1), labels = scales::percent)
+# coord_cartesian(xlim=c(days(1.1), days(3.9)))
+#theme(axis.text.y=element_blank(),axis.ticks.y=element_blank())+
+
+## SLEEP DURATION
+
+# Adding phase variable
+dt_DD[, phase := ifelse(t %% hours(24) < hours(12), "L", "D")]
+
+# make new dt with calculations of mean during L and D
+summary_dt_DD <- 
+  rejoin(dt_DD[,
+            .(
+              # sleep_fraction_all = mean(asleep),
+              sleep_fraction_l = mean(asleep[phase == "L"]),
+              sleep_fraction_d = mean(asleep[phase == "D"])
+            ),
+            ,by=id])
+summary_dt_DD
+
+# make summary_dt_melted to make two variables: 'phase' and actual value in 'sleep_fraction'
+summary_dt_DD_melted <- melt(summary_dt_DD, measure.vars = patterns("sleep_fraction_"),
+                          variable.name = "phase", value.name = "sleep_fraction")
+
+# sleep amount during L, D, total 
+## plotting summary_dt_melted file, sleep fraction during night time, day time or total sleep 
+ggplot(summary_dt_DD_melted, aes(x=sex, y=sleep_fraction, colour=phase)) + 
+  geom_boxplot(outlier.colour = NA) +
+  geom_jitter(alpha=.5) +
+  # facet_grid(sex ~ .) +
+  scale_y_continuous(name= "Fraction of time sleeping (%)",labels = scales::percent)+
+  scale_x_discrete(name= "DGRP 861")+
+  scale_colour_manual(name= "loading method", values = c("grey", "black"))+
+  theme_bw()
+
+#factor(incubator)
+---------------------------------------------------------------------------------------------------------
+  ## BOUTS AND LATENCY
+  
+  # make overall_summary including all calculations (sleep durations, bout length and number, sleep latencies)
+  library(sleepr)
+bout_dt_DD <- bout_analysis(asleep, dt_DD)
+bout_dt_DD <- bout_dt_DD[asleep == TRUE, -"asleep"]
+
+# make new dt bout_summary with id, n_bouts, mean_bout_length
+bout_summary_DD <- bout_dt_DD[,
+                        .(n_bouts = .N,
+                          mean_bout_length = mean(duration)),
+                        by=id]
+
+# merge summary_dt(all metadata variables, sleep_fraction_all, sleep_fraction_l, sleep_fraction_d) and 
+#bout_summary (n_bouts, mean_bout_length)
+overall_summary_DD <- summary_dt_DD[bout_summary_DD]
+overall_summary_DD
+
+bout_dt_DD_Dark <- bout_dt_DD[t %between%  c(days(2)+ hours(12), days(3)) & c(days(3)+ hours(12), days(4))]
+# We express t relatively to the first day
+bout_dt_DD_Dark[, t:= t - days(0)]
+
+bout_dt_DD_Light <- bout_dt_DD[t %between%  c(days(2), days(2) + hours(12)) & c(days(3), days(3)+ hours(12))]
+# We express t relatively to the first day
+bout_dt_DD_Light[, t:= t - days(0)]
+
+bout_summary_DD_d <- bout_dt_DD_Dark[,.(
+  latency_d = t[0], # the first bout is at t[1]
+  first_bout_length_d = duration[1],
+  latency_to_longest_bout_d = t[which.max(duration)],
+  length_longest_bout_d = max(duration),
+  n_bouts = .N,
+  mean_bout_length = mean(duration)
+),
+by=id]
+bout_summary_DD_d
+
+bout_summary_DD_l <- bout_dt_DD_Light[,.(
+  latency_l = t[1], # the first bout is at t[1]
+  first_bout_length_l = duration[1],
+  latency_to_longest_bout_l = t[which.max(duration)],
+  length_longest_bout_l = max(duration),
+  n_bouts = .N,
+  mean_bout_length = mean(duration)
+),
+by=id]
+bout_summary_DD_l
+
+# merge summary_dt(all metadata variables, sleep_fraction_all, sleep_fraction_l, sleep_fraction_d) and 
+#bout_summary (for both D and L: latency to first bout, first_bout_length, latency_to_longest_bout, length_longest_bout, n_bouts, mean_bout_length)
+overall_summary_DD_l <- summary_dt_DD[bout_summary_DD_l]
+overall_summary_DDl
+
+overall_summary_DD_d <- summary_dt_DD[bout_summary_DD_d]
+overall_summary_DD_d
+
+##BOUTS
+
+# # make these two plots for DGRP lines separately
+
+# Bout length vs time of the day
+ggetho(bout_dt_DD, aes(y=duration / 60), time_wrap = hours(24)) +
+  stat_pop_etho() +
+  facet_grid(sex ~ .) +
+  scale_y_continuous(name= "Bout length (min)")+
+  theme_bw()
+# 
+# # make a box plot of bout length for light and dark phases
+ggetho(bout_dt_DD, aes(y=duration / 60, colour=sex)) +
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(alpha=.5) +
+  stat_ld_annotations(height = 1, alpha=0.1, outline=NA, x_limits = days(c(2,4)),
+                      ld_colours = c("grey", "black")) +
+  # facet_grid(factor(DGRP) ~ .) +
+  scale_y_continuous(name= "Bout length (min)")+
+  theme_bw()
+
+# Bout number for different genotypes during night
+ggplot(overall_summary_DD_d, aes(x=factor(DGRP), y=n_bouts, colour=factor(loading_method))) + 
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(alpha=.5) +
+  scale_y_continuous(name= "Number of bouts")+
+  theme_bw()+
+  scale_x_discrete(name= "DGRP 441")+
+  scale_colour_manual(values = c("grey", "black"))
+
+# relationship between bout length and bout number, problem: this is over the whole time, both day and night
+#this is probably not that helpful
+ggplot(overall_summary_DD_d, aes(n_bouts, mean_bout_length, colour=sex)) +
+  geom_point() +
+  geom_smooth(method="lm", alpha=.1)+
+  facet_grid(factor(DGRP) ~ .) + 
+  scale_x_continuous(name="Number of bouts") +
+  scale_y_continuous(name="Average bout duration (s)")+
+  theme_bw()
+
+#correlation plots sleep duration and bout length or number for light and dark
+ggplot(overall_summary_DD, aes(n_bouts, sleep_fraction_d, colour=sex)) +
+  geom_point() +
+  geom_smooth(method="lm", alpha=.1)+
+  # facet_grid(sex ~ .) + 
+  scale_x_continuous(name="number of bouts") +
+  scale_y_continuous(name="Fraction of time sleeping during night", limits=c(0,1), labels = scales::percent)+
+  scale_colour_discrete(name="DGRP line #")+
+  theme_bw()
+
+ggplot(overall_summary_DD, aes(mean_bout_length /60, sleep_fraction_d, colour=sex)) +
+  geom_point() +
+  geom_smooth(method="lm", alpha=.1)+
+  # facet_grid(sex ~ .) + 
+  scale_x_continuous(name="mean bout duration (min)") +
+  scale_y_continuous(name="Fraction of time sleeping during night", limits=c(0,1), labels = scales::percent)+
+  scale_colour_discrete(name="sex")+
+  theme_bw()
+-----------------------------------------------------------------------------------------------------
+  ### LATENCY DURING D AND L IN BOTH CYCLES (LD and DD) ###
+
+# merge summary_dt(all metadata variables, sleep_fraction_all, sleep_fraction_l, sleep_fraction_d) and 
+#bout_summary (for both D and L: latency to first bout, first_bout_length, latency_to_longest_bout, length_longest_bout, n_bouts, mean_bout_length)
+overall_summary_DD_l <- summary_dt_DD[bout_summary_DD_l]
+overall_summary_DD_l
+
+overall_summary_DD_d <- summary_dt_DD[bout_summary_DD_d]
+overall_summary_DD_d
+
+## plotting sleep latency for different genotypes (D or L)
+ggplot(overall_summary_DD_d, aes(x=factor(DGRP), y=latency_d/60, colour=sex)) + 
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(alpha=.5) +
+  scale_y_continuous(name= "Sleep latency (min)")+
+  scale_x_discrete(name="DGRP line #") +
+  scale_colour_manual(values = c("grey", "black"))+
+  theme_bw()
+
+ggplot(overall_summary_DD_l, aes(x=factor(DGRP), y=latency_l/60, colour=sex)) + 
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(alpha=.5) +
+  scale_y_continuous(name= "Sleep latency (min)")+
+  scale_x_discrete(name="DGRP line #") +
+  scale_colour_manual(values = c("grey", "black"))+
+  theme_bw()
+
+ggplot(overall_summary_DD, aes(latency / 60, sleep_fraction_d, colour=sex)) +
+  geom_point() +
+  geom_smooth(method="lm", alpha=.1)+
+  facet_grid(genotype ~ .)+
+  scale_x_continuous(name= "Sleep latency")+
+  scale_y_continuous(name= "Fraction of time sleeping during night")+
+  theme_bw()
+
+## plotting sleep latency for different genotypes to longest sleep bout
+ggplot(overall_summary_DD, aes(x=genotype, y=latency_to_longest_bout/60, colour=sex)) + 
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter(alpha=.5) +
+  scale_y_continuous(name= "Sleep latency to longest bout")+
+  theme_bw()
+
+ggplot(overall_summary_DD, aes(latency_to_longest_bout/60, sleep_fraction_l, colour=sex)) +
+  geom_point() +
+  geom_smooth(method="lm", alpha=.1)+
+  facet_grid(genotype ~ .)+
+  scale_x_continuous(name= "Sleep latency to longest bout")+
+  scale_y_continuous(name= "Fraction of time sleeping during day")+
+  theme_bw()
